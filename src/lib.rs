@@ -26,6 +26,14 @@ pub enum ContractError {
     HostError = -4,
     LlmError = -5,
     LlmNotReady = -6,
+    GrowformerNotReady = -7,
+    GrowformerError = -8,
+    InsufficientPayment = -9,
+    InsufficientBalance = -10,
+    Unauthorized = -11,
+    ToolNotConfigured = -12,
+    /// Host must re-run WASM after resolving pending tool effects (`STATUS_NEEDS_TOOLS` on JS VM).
+    NeedsTools = -100,
 }
 
 impl ContractErrorCode for ContractError {
@@ -80,6 +88,9 @@ extern "C" {
     fn get_caller_did(output_ptr: *mut u8, max_len: usize) -> i32;
     fn verify_did(did_ptr: *const u8, did_len: usize) -> i32;
     fn msg_value() -> i64;
+    fn get_balance(address_ptr: *const u8) -> i64;
+    fn transfer(to_ptr: *const u8, amount: i64) -> i32;
+    fn get_timestamp() -> i64;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -180,6 +191,129 @@ pub fn llm_summarize(prompt: &str) -> Result<String, ContractError> {
     llm_call(prompt, 50, 200, 2048)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// Growformer agent host (`spacekit_agent`) — in-browser brain WASM via JS host
+// ═══════════════════════════════════════════════════════════════════════════════
+
+#[link(wasm_import_module = "spacekit_agent")]
+extern "C" {
+    /// 0 = not ready, 1 = ready (brain loaded and runtime initialized on host).
+    fn agent_growformer_status() -> i32;
+    /// Load brain bytes from VM `storage` under UTF-8 key (same as `storage_get`). Returns >0 = ok (byte len), -2 = error, -3 = missing, -4 = runtime not loaded.
+    fn agent_growformer_load_brain_from_storage(key_ptr: *const u8, key_len: usize) -> i32;
+    fn agent_growformer_generation(
+        prompt_ptr: *const u8,
+        prompt_len: usize,
+        dest_ptr: *mut u8,
+        max_len: usize,
+    ) -> i32;
+    fn agent_growformer_converse(
+        prompt_ptr: *const u8,
+        prompt_len: usize,
+        dest_ptr: *mut u8,
+        max_len: usize,
+    ) -> i32;
+    fn agent_growformer_codegen(
+        prompt_ptr: *const u8,
+        prompt_len: usize,
+        dest_ptr: *mut u8,
+        max_len: usize,
+    ) -> i32;
+    fn agent_growformer_brain_info(dest_ptr: *mut u8, max_len: usize) -> i32;
+    fn agent_growformer_reset_conversation();
+}
+
+pub mod growformer_status {
+    pub const NOT_READY: i32 = 0;
+    pub const READY: i32 = 1;
+}
+
+pub fn growformer_host_status() -> i32 {
+    unsafe { agent_growformer_status() }
+}
+
+pub fn growformer_is_ready() -> bool {
+    unsafe { agent_growformer_status() == growformer_status::READY }
+}
+
+/// Load the Growformer brain from persistent VM storage (host reads `storage_load` key space).
+/// Call before `growformer_generation` when the brain was seeded at deploy time (e.g. from chain storage later).
+pub fn growformer_load_brain_from_storage_key(key: &str) -> Result<(), ContractError> {
+    let n = unsafe { agent_growformer_load_brain_from_storage(key.as_ptr(), key.len()) };
+    if n > 0 {
+        return Ok(());
+    }
+    match n {
+        -3 => Err(ContractError::StorageError),
+        -4 => Err(ContractError::GrowformerNotReady),
+        _ => Err(ContractError::GrowformerError),
+    }
+}
+
+fn growformer_finish_response(result: i32, mut buffer: Vec<u8>) -> Result<String, ContractError> {
+    if result == -1 {
+        return Err(ContractError::GrowformerNotReady);
+    }
+    if result < 0 {
+        return Err(ContractError::GrowformerError);
+    }
+    buffer.truncate(result as usize);
+    String::from_utf8(buffer).map_err(|_| ContractError::GrowformerError)
+}
+
+/// Single-shot Growformer generation; response is UTF-8 JSON (see Growformer JS API).
+pub fn growformer_generation(prompt: &str, max_response_len: usize) -> Result<String, ContractError> {
+    let mut buffer = vec![0u8; max_response_len];
+    let result = unsafe {
+        agent_growformer_generation(
+            prompt.as_ptr(),
+            prompt.len(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+        )
+    };
+    growformer_finish_response(result, buffer)
+}
+
+/// Multi-turn conversational generation; host keeps conversation state.
+pub fn growformer_converse(prompt: &str, max_response_len: usize) -> Result<String, ContractError> {
+    let mut buffer = vec![0u8; max_response_len];
+    let result = unsafe {
+        agent_growformer_converse(
+            prompt.as_ptr(),
+            prompt.len(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+        )
+    };
+    growformer_finish_response(result, buffer)
+}
+
+/// Code generation; response is UTF-8 JSON.
+pub fn growformer_codegen(prompt: &str, max_response_len: usize) -> Result<String, ContractError> {
+    let mut buffer = vec![0u8; max_response_len];
+    let result = unsafe {
+        agent_growformer_codegen(
+            prompt.as_ptr(),
+            prompt.len(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+        )
+    };
+    growformer_finish_response(result, buffer)
+}
+
+/// Brain metadata as UTF-8 JSON.
+pub fn growformer_brain_info(max_len: usize) -> Result<String, ContractError> {
+    let mut buffer = vec![0u8; max_len];
+    let result = unsafe { agent_growformer_brain_info(buffer.as_mut_ptr(), buffer.len()) };
+    growformer_finish_response(result, buffer)
+}
+
+pub fn growformer_reset_conversation() {
+    unsafe { agent_growformer_reset_conversation() };
+}
+
 pub fn emit_event_bytes(event_type: &str, data: &[u8]) {
     unsafe {
         emit_event(event_type.as_ptr(), event_type.len(), data.as_ptr(), data.len());
@@ -210,6 +344,42 @@ pub fn verify_did_string(did: &str) -> bool {
 pub fn msg_value_u64() -> u64 {
     unsafe { msg_value() as u64 }
 }
+
+/// Get the native ASTRA balance of a 20-byte address.
+/// The address is read as raw bytes from the given slice (first 20 bytes used).
+pub fn get_balance_of(address: &[u8; 20]) -> u64 {
+    unsafe { get_balance(address.as_ptr()) as u64 }
+}
+
+/// Transfer `amount` native ASTRA from the calling contract to the 20-byte
+/// destination address. Returns `Ok(())` on success.
+pub fn transfer_to(to_address: &[u8; 20], amount: u64) -> Result<(), ContractError> {
+    let result = unsafe { transfer(to_address.as_ptr(), amount as i64) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(ContractError::HostError)
+    }
+}
+
+/// Require that the caller attached at least `min_amount` native ASTRA to
+/// this transaction. Returns the actual attached value on success.
+pub fn require_payment(min_amount: u64) -> Result<u64, ContractError> {
+    let val = msg_value_u64();
+    if val < min_amount {
+        Err(ContractError::InsufficientPayment)
+    } else {
+        Ok(val)
+    }
+}
+
+/// Get the current block timestamp (seconds since Unix epoch).
+pub fn block_timestamp() -> u64 {
+    unsafe { get_timestamp() as u64 }
+}
+
+mod agent_host;
+pub use agent_host::{entitlement, messaging, paymaster, payments, remote_storage, session_keys, tools};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Storage host functions
@@ -277,27 +447,37 @@ pub mod prelude {
     pub mod env {
         use super::{Did, String};
 
-        /// Get the caller's DID
         pub fn caller() -> Did {
             crate::get_caller_did_string().unwrap_or_default()
         }
 
-        /// Get block timestamp (stub - needs host function)
         pub fn block_timestamp() -> u64 {
-            // TODO: Add host function for block timestamp
-            0
+            crate::block_timestamp()
         }
 
-        /// Emit an event
+        pub fn msg_value() -> u64 {
+            crate::msg_value_u64()
+        }
+
+        /// Require minimum payment attached to the transaction.
+        pub fn require_payment(min: u64) -> Result<u64, crate::ContractError> {
+            crate::require_payment(min)
+        }
+
+        pub fn transfer(to: &[u8; 20], amount: u64) -> Result<(), crate::ContractError> {
+            crate::transfer_to(to, amount)
+        }
+
+        pub fn balance_of(address: &[u8; 20]) -> u64 {
+            crate::get_balance_of(address)
+        }
+
         pub fn emit<T>(_event: &str, _data: &T) {
-            // Serialization would be needed here for real use
-            // For now just emit empty data
             crate::emit_event_bytes(_event, &[]);
         }
 
-        /// Call another contract (stub - needs host function)
+        /// Cross-contract call (stub — needs host function)
         pub fn call(_address: String, _method: &str, _arg: &Did) -> bool {
-            // TODO: Add host function for cross-contract calls
             false
         }
     }

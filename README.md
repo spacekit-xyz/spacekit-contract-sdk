@@ -13,10 +13,12 @@ Note: This SDK is a work in progress and is not yet published to crates.io. It i
 - **`SpacekitContract`** trait and **`spacekit_contract!`** macro — export `main(input_ptr, input_len)` and `get_result(dest_ptr, max_len)` for the host.
 - **Events** — `emit_event_bytes` / `emit_event_signature` (host: `env.emit_event`).
 - **DID** — `get_caller_did_string`, `verify_did_string`.
+- **Payments** — `msg_value_u64`, `get_balance_of`, `transfer_to`, `require_payment`, `block_timestamp`.
 - **LLM** — `llm_call`, `llm_get_status`, `llm_status` constants; host module `spacekit_llm`.
+- **Growformer** — `growformer_generation`, `growformer_converse`, `growformer_codegen`, `growformer_brain_info`, `growformer_reset_conversation`; host module `spacekit_agent`.
 - **Storage** — `storage_set`, `storage_get`, string helpers; host module `spacekit_storage`.
-- **Errors** — `ContractError` with `Failed`, `InvalidInput`, `StorageError`, `HostError`, `LlmError`, `LlmNotReady`.
-- **Prelude** — `prelude::env` (caller, emit, stubs for block_timestamp / cross-contract call).
+- **Errors** — `ContractError` with `Failed`, `InvalidInput`, `StorageError`, `HostError`, `LlmError`, `LlmNotReady`, `GrowformerNotReady`, `GrowformerError`, `InsufficientPayment`, `InsufficientBalance`, `Unauthorized`.
+- **Prelude** — `prelude::env` (`caller`, `msg_value`, `require_payment`, `transfer`, `balance_of`, `block_timestamp`, `emit`, `call`).
 
 ---
 
@@ -65,11 +67,34 @@ cargo build --target wasm32-unknown-unknown --release
 
 The VM must provide:
 
-| Module           | Functions |
-|------------------|-----------|
-| **env**          | `emit_event`, `get_caller_did`, `verify_did`, `msg_value` |
+| Module | Functions |
+|--------|-----------|
+| **env** | `emit_event`, `get_caller_did`, `verify_did`, `msg_value`, `get_balance`, `transfer`, `get_timestamp` |
 | **spacekit_llm** | `llm_inference`, `llm_status` |
+| **spacekit_agent** | `agent_growformer_status`, `agent_growformer_load_brain_from_storage`, `agent_growformer_generation`, `agent_growformer_converse`, `agent_growformer_codegen`, `agent_growformer_brain_info`, `agent_growformer_reset_conversation` |
 | **spacekit_storage** | `storage_save`, `storage_load` |
+
+### Payment Host Functions
+
+Contracts can interact with native ASTRA balances:
+
+```rust
+use spacekit_contract_sdk::prelude::*;
+
+// Require minimum payment
+let paid = env::require_payment(1000)?; // at least 1000 ASTRA
+
+// Check a balance
+let bal = env::balance_of(&address_bytes);
+
+// Transfer ASTRA
+env::transfer(&recipient_bytes, 500)?;
+
+// Get current timestamp
+let ts = env::block_timestamp();
+```
+
+Both the Rust compute node (`swtchvm_node.rs`) and the JS VM (`spacekit-js/src/host.ts`) implement these host functions with identical signatures.
 
 See [SpaceKitJS Technical Whitepaper](https://github.com/spacekit-xyz/spacekit-js) for the full host ABI and execution model.
 
