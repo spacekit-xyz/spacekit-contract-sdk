@@ -32,6 +32,8 @@ pub enum ContractError {
     InsufficientBalance = -10,
     Unauthorized = -11,
     ToolNotConfigured = -12,
+    /// Nested `contract_call` exceeded host max depth (Rust VM / JS host use 8).
+    NestedContractDepth = -13,
     /// Host must re-run WASM after resolving pending tool effects (`STATUS_NEEDS_TOOLS` on JS VM).
     NeedsTools = -100,
 }
@@ -429,9 +431,82 @@ pub fn storage_get_string(key: &str, max_len: usize) -> Option<String> {
         .and_then(|bytes| String::from_utf8(bytes).ok())
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Prelude module - re-exports for contract usage
-// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "spacekit_contract")]
+extern "C" {
+    /// Cross-contract synchronous call (SpaceKit VM host). Returns bytes written to `output`,
+    /// or a negative error code (`-1` missing callee / code, `-2` host/WASM error, `-3` max depth 8,
+    /// `-4` I/O bounds). Matches `spacekit-js` `host.ts` `spacekit_contract.contract_call`.
+    fn contract_call(
+        contract_id_ptr: *const u8,
+        contract_id_len: usize,
+        input_ptr: *const u8,
+        input_len: usize,
+        output_ptr: *mut u8,
+        max_len: usize,
+    ) -> i32;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+unsafe fn contract_call(
+    _contract_id_ptr: *const u8,
+    _contract_id_len: usize,
+    _input_ptr: *const u8,
+    _input_len: usize,
+    _output_ptr: *mut u8,
+    _max_len: usize,
+) -> i32 {
+    -1
+}
+
+/// Invoke another contract by **20-byte address string** (hex, optional `0x`) with an arbitrary
+/// input payload (e.g. JSON matching `JsonContractCodec` in `spacekit-js`).
+pub fn contract_call_raw(
+    contract_id: &str,
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, ContractError> {
+    let n = unsafe {
+        contract_call(
+            contract_id.as_ptr(),
+            contract_id.len(),
+            input.as_ptr(),
+            input.len(),
+            output.as_mut_ptr(),
+            output.len(),
+        )
+    };
+    match n {
+        i if i > 0 => Ok(i as usize),
+        -1 => Err(ContractError::Failed),
+        -2 => Err(ContractError::HostError),
+        -3 => Err(ContractError::NestedContractDepth),
+        -4 => Err(ContractError::InvalidInput),
+        _ if n < 0 => Err(ContractError::HostError),
+        _ => Ok(0),
+    }
+}
+
+fn json_string_for_contract_call(s: &str) -> String {
+    let mut o = String::with_capacity(s.len().saturating_add(2));
+    o.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use alloc::format;
+                o.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
 
 pub mod prelude {
     extern crate alloc;
@@ -445,7 +520,7 @@ pub mod prelude {
     pub type Address = String;
 
     pub mod env {
-        use super::{Did, String};
+        use super::{Did, String, vec};
 
         pub fn caller() -> Did {
             crate::get_caller_did_string().unwrap_or_default()
@@ -476,9 +551,27 @@ pub mod prelude {
             crate::emit_event_bytes(_event, &[]);
         }
 
-        /// Cross-contract call (stub — needs host function)
-        pub fn call(_address: String, _method: &str, _arg: &Did) -> bool {
-            false
+        /// Cross-contract call using the same JSON envelope as `spacekit-js` `JsonContractCodec.encode`.
+        /// Returns the callee output bytes (possibly empty if the callee returned zero length).
+        pub fn call_with_output(
+            address: String,
+            method: &str,
+            arg: &Did,
+        ) -> Result<super::Vec<u8>, crate::ContractError> {
+            use alloc::format;
+            let body = format!(
+                "{{\"method\":{},\"args\":[{}]}}",
+                crate::json_string_for_contract_call(method),
+                crate::json_string_for_contract_call(arg)
+            );
+            let mut buf = vec![0u8; 65536];
+            let n = crate::contract_call_raw(address.trim(), body.as_bytes(), &mut buf)?;
+            Ok(buf[..n].to_vec())
+        }
+
+        /// Same as [`call_with_output`] but only reports whether the host considered the call successful.
+        pub fn call(address: String, method: &str, arg: &Did) -> bool {
+            call_with_output(address, method, arg).is_ok()
         }
     }
 }

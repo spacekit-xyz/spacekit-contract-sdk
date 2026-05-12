@@ -1,6 +1,9 @@
 # SpaceKit Contract SDK
 
-Minimal `no_std` SDK for building SpaceKit WASM smart contracts. Contracts compile to `wasm32-unknown-unknown` and run on the [SpaceKit VM](https://github.com/spacekit-xyz/spacekit-js) (browser and compute node).
+Minimal `no_std` SDK for building SpaceKit WASM smart contracts. Contracts compile to `wasm32-unknown-unknown` and link against the SpaceKit host ABI.
+
+- **`spacekit-js`** — full `createImports` surface + adapters (preferred for agent contracts today).
+- **`spacekit-compute-node`** — registers the same **import module names** incrementally (`swtchvm_node.rs`). **`spacekit_contract!` is compile-time only** (it does not “run” on the node); the node must expose WASM imports such as `spacekit_agent`, `spacekit_payments`, etc. Growformer **inference** and several effect paths may still be **stubs** on the Rust VM — use JS or extend the node for production agent behaviour.
 
 **Repository:** [github.com/spacekit-xyz/spacekit-contract-sdk](https://github.com/spacekit-xyz/spacekit-contract-sdk)
 
