@@ -17,7 +17,7 @@ Note: This SDK is a work in progress and is not yet published to crates.io. It i
 - **Events** — `emit_event_bytes` / `emit_event_signature` (host: `env.emit_event`).
 - **DID** — `get_caller_did_string`, `verify_did_string`.
 - **Payments** — `msg_value_u64`, `get_balance_of`, `transfer_to`, `require_payment`, `block_timestamp`.
-- **LLM** — `llm_call`, `llm_get_status`, `llm_status` constants; host module `spacekit_llm`.
+- **(Deprecated) LLM** — `llm_call`, `llm_get_status`, `llm_status` constants; host module `spacekit_llm`.
 - **Growformer** — `growformer_generation`, `growformer_converse`, `growformer_codegen`, `growformer_brain_info`, `growformer_reset_conversation`; host module `spacekit_agent`.
 - **Storage** — `storage_set`, `storage_get`, string helpers; host module `spacekit_storage`.
 - **Errors** — `ContractError` with `Failed`, `InvalidInput`, `StorageError`, `HostError`, `LlmError`, `LlmNotReady`, `GrowformerNotReady`, `GrowformerError`, `InsufficientPayment`, `InsufficientBalance`, `Unauthorized`.
