@@ -44,6 +44,9 @@ impl ContractErrorCode for ContractError {
     }
 }
 
+/// Little-endian length-prefixed wire helpers for parsing and building `handle` payloads.
+pub mod wire;
+
 pub trait SpacekitContract {
     type Error: ContractErrorCode + Copy;
     fn init() -> Self;

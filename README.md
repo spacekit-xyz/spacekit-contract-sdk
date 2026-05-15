@@ -21,6 +21,7 @@ Note: This SDK is a work in progress and is not yet published to crates.io. It i
 - **Growformer** — `growformer_generation`, `growformer_converse`, `growformer_codegen`, `growformer_brain_info`, `growformer_reset_conversation`; host module `spacekit_agent`.
 - **Storage** — `storage_set`, `storage_get`, string helpers; host module `spacekit_storage`.
 - **Errors** — `ContractError` with `Failed`, `InvalidInput`, `StorageError`, `HostError`, `LlmError`, `LlmNotReady`, `GrowformerNotReady`, `GrowformerError`, `InsufficientPayment`, `InsufficientBalance`, `Unauthorized`.
+- **Wire** — `wire` module: cursor-based LE `read_u8` / `read_u16` / `read_u32` / `read_u64`, length-prefixed `read_string` / `read_string_max`, `read_bytes_u16` / `read_bytes_u32`, `read_fixed` / `read_bytes32`, `expect_consumed`, and matching `write_*` helpers for building response buffers.
 - **Prelude** — `prelude::env` (`caller`, `msg_value`, `require_payment`, `transfer`, `balance_of`, `block_timestamp`, `emit`, `call`).
 
 ---
