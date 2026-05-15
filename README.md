@@ -24,7 +24,14 @@ Note: This SDK is a work in progress and is not yet published to crates.io. It i
 - **Wire** — `wire` module: cursor-based LE `read_u8` / `read_u16` / `read_u32` / `read_u64`, length-prefixed `read_string` / `read_string_max`, `read_bytes_u16` / `read_bytes_u32`, `read_fixed` / `read_bytes32`, `expect_consumed`, and matching `write_*` helpers for building response buffers.
 - **Prelude** — `prelude::env` (`caller`, `msg_value`, `require_payment`, `transfer`, `balance_of`, `block_timestamp`, `emit`, `call`).
 
----
+### SKCL compiler (same repository)
+
+This workspace also ships **`spacekit-contract-lang`** — the SpaceKit Contract Language (SKCL) compiler that emits Rust + `Cargo.toml` wired to this SDK. Source and spec live under **`contract-lang/`** (see `contract-lang/README.md` and `contract-lang/SKCL_V1.md`). Run it with:
+
+```bash
+cargo run -p spacekit-contract-lang -- contract-lang/examples/astra_token.scl <output_dir>
+```
+
 
 ## Usage
 
